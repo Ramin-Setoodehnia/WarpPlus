@@ -4,7 +4,7 @@
 # Warp+ All-in-One Installer with LuCI UI
 #
 # Created by: PeDitX & Gemini
-# Version: 4.3 (Final UI Logic & Style Fixes)
+# Version: 6.3 (Final Stable - UI Logic Completely Rewritten to Prioritize User Input)
 #
 # This script will:
 # 1. Install the correct warp+ binary for the system architecture.
@@ -14,11 +14,11 @@
 # 5. Configure Passwall/Passwall2 automatically.
 #================================================================================
 
-echo "Starting Warp+ All-in-One Installer v4.3..."
+echo "Starting Warp+ All-in-One Installer v6.3..."
 sleep 2
 
 # --- 1. Detect Architecture and Download Binary ---
-echo "\n[Step 1/6] Detecting system architecture and downloading Warp+..."
+echo -e "\n[Step 1/6] Detecting system architecture and downloading Warp+..."
 ARCH=$(uname -m)
 case $ARCH in
     x86_64)   WARP_URL="https://github.com/bepass-org/warp-plus/releases/download/v1.2.5/warp-plus_linux-amd64.zip" ;;
@@ -47,14 +47,14 @@ fi
 echo "Download and extraction successful."
 
 # --- 2. Install Binary ---
-echo "\n[Step 2/6] Installing the Warp+ binary..."
+echo -e "\n[Step 2/6] Installing the Warp+ binary..."
 mv -f warp-plus warp
 cp -f warp /usr/bin/
 chmod +x /usr/bin/warp
 echo "Binary installed to /usr/bin/warp."
 
 # --- 3. Create UCI Config and LuCI UI Files ---
-echo "\n[Step 3/6] Creating LuCI interface and configuration files..."
+echo -e "\n[Step 3/6] Creating LuCI interface and configuration files..."
 
 # Create UCI config file to store settings
 if [ ! -f /etc/config/wrpplus ]; then
@@ -91,9 +91,22 @@ function api_handler()
     if action == "status" then
         local running = (os.execute("pgrep -f '/usr/bin/warp' >/dev/null 2>&1") == 0)
         local ip = "N/A"
+        local ipCountryCode = "N/A"
         if running then
             local ip_handle = io.popen("curl --socks5 127.0.0.1:8086 -m 7 -s http://ifconfig.me/ip")
-            if ip_handle then ip = ip_handle:read("*a"):gsub("\n", ""); ip_handle:close() end
+            if ip_handle then 
+                ip = ip_handle:read("*a"):gsub("\n", "")
+                ip_handle:close()
+                if ip ~= "N/A" and ip ~= "" then
+                    local country_handle = io.popen("curl -s http://ip-api.com/json/" .. ip .. "?fields=countryCode")
+                    if country_handle then
+                        local json_str = country_handle:read("*a")
+                        country_handle:close()
+                        local code = json_str:match('"countryCode":"(..)"')
+                        if code then ipCountryCode = code end
+                    end
+                end
+            end
         end
         local mode = uci:get("wrpplus", "settings", "mode") or "scan"
         local country = uci:get("wrpplus", "settings", "country") or "US"
@@ -101,7 +114,8 @@ function api_handler()
         local reconnect_interval = uci:get("wrpplus", "settings", "reconnect_interval") or "120"
         luci.http.prepare_content("application/json")
         luci.http.write_json({
-            running = running, ip = ip, mode = mode, country = country,
+            running = running, ip = ip, ipCountryCode = ipCountryCode,
+            mode = mode, country = country,
             reconnect_enabled = reconnect_enabled, reconnect_interval = reconnect_interval
         })
 
@@ -132,20 +146,13 @@ function api_handler()
         else args = args .. " --scan" end
 
         log("Generating new init.d script with args: " .. args)
-        -- Using Lua's multi-line string to avoid literal \n characters
-        local init_script_content = [[
-#!/bin/sh /etc/rc.common
-START=91
-USE_PROCD=1
-PROG=/usr/bin/warp
-start_service() {
-    local args="]] .. args .. [["
-    procd_open_instance
-    procd_set_param command $PROG $args
-    procd_set_param respawn
-    procd_close_instance
-}
-]]
+        local init_script_content = "#!/bin/sh /etc/rc.common\n" ..
+                                        "START=91\nUSE_PROCD=1\nPROG=/usr/bin/warp\n" ..
+                                        "start_service() {\n    local args=\"" .. args .. "\"\n" ..
+                                        "    procd_open_instance\n    procd_set_param command $PROG $args\n" ..
+                                        "    procd_set_param stdout 1\n    procd_set_param stderr 1\n" ..
+                                        "    procd_set_param respawn\n    procd_close_instance\n}\n"
+        
         local file = io.open("/etc/init.d/warp", "w")
         if file then
             file:write(init_script_content)
@@ -154,7 +161,7 @@ start_service() {
         
         luci.sys.call("chmod 755 /etc/init.d/warp")
         log("Restarting warp service to apply changes.")
-        luci.sys.call("/etc/init.d/warp restart >> " .. DEBUG_LOG_FILE .. " 2>&1")
+        luci.sys.call("/etc/init.d/warp restart >> " .. DEBUG_LOG_FILE .. " 2>&1 &")
         luci.http.prepare_content("application/json")
         luci.http.write_json({success=true})
 
@@ -215,22 +222,27 @@ cat > /usr/lib/lua/luci/view/wrpplus/main.htm <<'EoL'
     .btn-save-changes.dirty { background-color: #ffc107; color: #000; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(255, 193, 7, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); } }
     #country-select, #reconnectInterval { padding: 8px; border-radius: 8px; background-color: rgba(255, 255, 255, 0.1); color: #fff; border: 1px solid rgba(255, 255, 255, 0.2); font-weight: 600; font-size: 14px; }
-    #country-select option { background-color: #333; color: #fff; } /* Fix for dropdown style */
+    #country-select option { background-color: #333; color: #fff; }
     .debug-log-container { margin-top: 30px; padding: 15px; background-color: rgba(0, 0, 0, 0.3); border-radius: 8px; }
     #log-output { background-color: #000; color: #00ff00; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 250px; overflow-y: auto; border: 1px solid #333; }
 </style>
 
 <div class="peditx-container">
+    <div id="notification-bar" style="display: none; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background-color: #28a745; color: white; padding: 12px 20px; border-radius: 8px; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.2); font-weight: 600; transition: opacity 0.5s;"></div>
     <h2>Warp+ Manager</h2>
     <div class="peditx-row"><span class="peditx-label">Service Status:</span><span class="peditx-value"><span id="statusIndicator" class="peditx-status-indicator"></span><span id="statusText">...</span></span></div>
-    <div class="peditx-row"><span class="peditx-label">Outgoing IP:</span><span id="ipText" class="peditx-value">...</span></div>
+    <div class="peditx-row"><span class="peditx-label">Outgoing IP:</span><span class="peditx-value"><span id="ipFlag"></span> <span id="ipText">...</span></span></div>
     <div class="peditx-row" style="justify-content: center; padding-top: 20px;"><button id="connectBtn" class="peditx-btn">Connect</button><button id="disconnectBtn" class="peditx-btn" style="display:none;">Disconnect</button></div>
     
     <div class="settings-section">
         <h3>Service Settings</h3>
-        <div class="peditx-row"><span class="peditx-label">Configured Mode:</span><span id="activeModeText" class="peditx-value">...</span></div>
+        <div class="peditx-row"><span class="peditx-label">Configured Mode:</span><span id="configuredModeText" class="peditx-value">...</span></div>
         <div class="controls-group" id="mode-btn-group"><button class="peditx-btn mode-btn" data-mode="scan">Scan</button><button class="peditx-btn mode-btn" data-mode="gool">Gool</button><button class="peditx-btn mode-btn" data-mode="cfon">Psiphon</button></div>
-        <div id="country-selector" class="controls-group" style="display: none; margin-top: 15px;"><label for="country-select" class="peditx-label">Psiphon Country:&nbsp;</label><select id="country-select"><option value="AT">🇦🇹 Austria</option><option value="AU">🇦🇺 Australia</option><option value="BE">🇧🇪 Belgium</option><option value="CA">🇨🇦 Canada</option><option value="DE">🇩🇪 Germany</option><option value="FR">🇫🇷 France</option><option value="GB">🇬🇧 UK</option><option value="IN">🇮🇳 India</option><option value="JP">🇯🇵 Japan</option><option value="NL">🇳🇱 Netherlands</option><option value="US" selected>🇺🇸 USA</option></select></div>
+        <div id="country-selector" class="controls-group" style="display: none; margin-top: 15px;"><label for="country-select" class="peditx-label">Psiphon Country:&nbsp;</label>
+            <select id="country-select">
+                <option value="AT">🇦🇹 Austria</option><option value="AU">🇦🇺 Australia</option><option value="BE">🇧🇪 Belgium</option><option value="BG">🇧🇬 Bulgaria</option><option value="CA">🇨🇦 Canada</option><option value="CH">🇨🇭 Switzerland</option><option value="CZ">🇨🇿 Czech Rep</option><option value="DE">🇩🇪 Germany</option><option value="DK">🇩🇰 Denmark</option><option value="EE">🇪🇪 Estonia</option><option value="ES">🇪🇸 Spain</option><option value="FI">🇫🇮 Finland</option><option value="FR">🇫🇷 France</option><option value="GB">🇬🇧 UK</option><option value="HR">🇭🇷 Croatia</option><option value="HU">🇭🇺 Hungary</option><option value="IE">🇮🇪 Ireland</option><option value="IN">🇮🇳 India</option><option value="IT">🇮🇹 Italy</option><option value="JP">🇯🇵 Japan</option><option value="LV">🇱🇻 Latvia</option><option value="NL">🇳🇱 Netherlands</option><option value="NO">🇳🇴 Norway</option><option value="PL">🇵🇱 Poland</option><option value="PT">🇵🇹 Portugal</option><option value="RO">🇷🇴 Romania</option><option value="RS">🇷🇸 Serbia</option><option value="SE">🇸🇪 Sweden</option><option value="SG">🇸🇬 Singapore</option><option value="SK">🇸🇰 Slovakia</option><option value="US" selected>🇺🇸 USA</option>
+            </select>
+        </div>
         <div class="peditx-row" style="justify-content: center; padding-top: 20px;"><button id="applyBtn" class="peditx-btn btn-save-changes">Save & Apply Settings</button></div>
     </div>
 
@@ -243,7 +255,7 @@ cat > /usr/lib/lua/luci/view/wrpplus/main.htm <<'EoL'
             <input type="number" id="reconnectInterval" min="1" value="120" style="width: 80px;">
             <label for="reconnectInterval">Minutes</label>
         </div>
-        <div class="peditx-row" style="justify-content: center; padding-top: 20px;"><button id="reconnectSaveBtn" class="peditx-btn" style="background-color: #5bc0de;">Save Reconnect Settings</button></div>
+        <div class="peditx-row" style="justify-content: center; padding-top: 20px;"><button id="reconnectSaveBtn" class="peditx-btn btn-save-changes" style="background-color: #5bc0de;">Save Reconnect Settings</button></div>
     </div>
 
     <div class="debug-log-container"><h3>Debug Log</h3><pre id="log-output">Waiting for actions...</pre></div>
@@ -253,20 +265,38 @@ cat > /usr/lib/lua/luci/view/wrpplus/main.htm <<'EoL'
 document.addEventListener('DOMContentLoaded', function() {
     const E = id => document.getElementById(id);
     const elements = {
-        indicator: E('statusIndicator'), text: E('statusText'), ip: E('ipText'),
-        connect: E('connectBtn'), disconnect: E('disconnectBtn'), activeMode: E('activeModeText'),
-        apply: E('applyBtn'), countryContainer: E('country-selector'), countrySelect: E('country-select'),
+        indicator: E('statusIndicator'), text: E('statusText'), ip: E('ipText'), ipFlag: E('ipFlag'),
+        connect: E('connectBtn'), disconnect: E('disconnectBtn'), configuredMode: E('configuredModeText'),
+        applyBtn: E('applyBtn'), countryContainer: E('country-selector'), countrySelect: E('country-select'),
         reconStatus: E('reconnectStatus'), reconEnabled: E('reconnectEnabled'),
-        reconInterval: E('reconnectInterval'), reconSave: E('reconnectSaveBtn'),
+        reconInterval: E('reconnectInterval'), reconSaveBtn: E('reconnectSaveBtn'),
         log: E('log-output'), modeButtons: document.querySelectorAll('.mode-btn'),
+        notificationBar: E('notification-bar'),
         allControls: document.querySelectorAll('.peditx-btn, #country-select, #reconnectEnabled, #reconnectInterval')
     };
 
-    let serverState = {}; // Authoritative state from backend
-    let uiState = {};     // User's selections on the screen
+    // This object holds the user's selections. It is the SINGLE SOURCE OF TRUTH for the controls.
+    let uiState = {};
+    // This object holds the last known state from the server. Used for display only.
+    let serverState = {};
     let isBusy = false;
+    let initialLoadComplete = false;
 
-    const callAPI = (params, callback) => XHR.get('<%=luci.dispatcher.build_url("admin/peditxos/wrpplus_api")%>' + params, null, (x, data) => data && callback(data));
+    const deepCopy = (obj) => JSON.parse(JSON.stringify(obj));
+
+    const callAPI = (params, callback) => {
+        const url = '<%=luci.dispatcher.build_url("admin/peditxos/wrpplus_api")%>' + params;
+        const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + new Date().getTime();
+        XHR.get(url + cacheBuster, null, (x, data) => {
+            if (data) callback(data);
+        });
+    };
+
+    const showNotification = (message, duration = 3000) => {
+        elements.notificationBar.textContent = message;
+        elements.notificationBar.style.display = 'block';
+        setTimeout(() => { elements.notificationBar.style.display = 'none'; }, duration);
+    };
 
     function setBusy(busy, message = '') {
         isBusy = busy;
@@ -274,98 +304,125 @@ document.addEventListener('DOMContentLoaded', function() {
         if (busy && message) { elements.text.innerText = message; }
     }
 
-    function render() {
-        if (isBusy) return;
+    function getFlagEmoji(countryCode) {
+        if (!countryCode || countryCode.length !== 2 || countryCode === "N/A") return '';
+        const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt());
+        return String.fromCodePoint(...codePoints);
+    }
 
-        // Connection Status (always from server)
+    function updateUI() {
+        if (!initialLoadComplete) return;
+
+        // --- Update informational displays from serverState ---
         elements.indicator.className = 'peditx-status-indicator ' + (serverState.running ? 'status-connected' : 'status-disconnected');
-        elements.text.innerText = serverState.running ? 'Connected' : 'Disconnected';
+        elements.text.innerText = isBusy ? elements.text.innerText : (serverState.running ? 'Connected' : 'Disconnected');
         elements.ip.innerText = serverState.running ? (serverState.ip || 'Fetching...') : 'N/A';
+        elements.ipFlag.innerText = serverState.running ? getFlagEmoji(serverState.ipCountryCode) + ' ' : '';
         elements.connect.style.display = serverState.running ? 'none' : 'inline-block';
         elements.disconnect.style.display = serverState.running ? 'inline-block' : 'none';
+        elements.configuredMode.innerText = {scan: 'Scan', gool: 'Gool', cfon: 'Psiphon'}[serverState.mode] || 'N/A';
+        elements.reconStatus.innerText = serverState.reconnect_enabled === '1' ? `Enabled (Every ${serverState.reconnect_interval} mins)` : 'Disabled';
 
-        // Service Settings (use UI state to show user's choice)
-        elements.activeMode.innerText = {scan: 'Scan', gool: 'Gool', cfon: 'Psiphon'}[serverState.mode] || 'N/A';
+        // --- Update interactive controls from uiState ---
         elements.modeButtons.forEach(btn => btn.classList.toggle('selected-mode', btn.dataset.mode === uiState.mode));
         elements.countryContainer.style.display = (uiState.mode === 'cfon') ? 'flex' : 'none';
         elements.countrySelect.value = uiState.country;
-        
-        // Reconnect Settings (use UI state)
-        const reconEnabled = uiState.reconnect_enabled === '1';
-        elements.reconStatus.innerText = serverState.reconnect_enabled === '1' ? `Enabled (Every ${serverState.reconnect_interval} mins)` : 'Disabled';
-        elements.reconEnabled.checked = reconEnabled;
+        elements.reconEnabled.checked = uiState.reconnect_enabled === '1';
         elements.reconInterval.value = uiState.reconnect_interval;
-        
-        // Check for unsaved changes
+
+        // --- Update save button states by comparing uiState and serverState ---
         const serviceDirty = uiState.mode !== serverState.mode || (uiState.mode === 'cfon' && uiState.country !== serverState.country);
-        elements.apply.classList.toggle('dirty', serviceDirty);
+        elements.applyBtn.classList.toggle('dirty', serviceDirty);
         const reconnectDirty = uiState.reconnect_enabled !== serverState.reconnect_enabled || uiState.reconnect_interval !== serverState.reconnect_interval;
-        elements.reconSave.classList.toggle('dirty', reconnectDirty);
+        elements.reconSaveBtn.classList.toggle('dirty', reconnectDirty);
     }
-
-    function fetchStatus() {
-        if (document.hidden || isBusy) return;
-        callAPI('?action=status', data => {
-            serverState = data;
-            // Sync UI state with server state ONLY if there are no unsaved changes
-            if (!elements.apply.classList.contains('dirty')) {
-                uiState.mode = serverState.mode;
-                uiState.country = serverState.country;
-            }
-            if (!elements.reconSave.classList.contains('dirty')) {
-                uiState.reconnect_enabled = serverState.reconnect_enabled;
-                uiState.reconnect_interval = serverState.reconnect_interval;
-            }
-            render();
-        });
-    }
-
-    function fetchLog() {
-        if (document.hidden || isBusy) return;
-        callAPI('?action=get_debug_log', data => {
-            if (data && data.log && elements.log.textContent !== data.log) {
-                elements.log.textContent = data.log;
-                elements.log.scrollTop = elements.log.scrollHeight;
-            }
-        });
-    }
-
-    elements.modeButtons.forEach(btn => btn.addEventListener('click', function() {
-        uiState.mode = this.dataset.mode;
-        render();
-    }));
-    elements.countrySelect.addEventListener('change', () => { uiState.country = elements.countrySelect.value; render(); });
-    elements.reconEnabled.addEventListener('change', () => { uiState.reconnect_enabled = elements.reconEnabled.checked ? '1' : '0'; render(); });
-    elements.reconInterval.addEventListener('input', () => { uiState.reconnect_interval = elements.reconInterval.value; render(); });
-
-    elements.connect.addEventListener('click', () => { setBusy(true, 'Connecting...'); callAPI('?action=toggle', () => setTimeout(() => { setBusy(false); fetchStatus(); }, 5000)); });
-    elements.disconnect.addEventListener('click', () => { setBusy(true, 'Disconnecting...'); callAPI('?action=toggle', () => setTimeout(() => { setBusy(false); fetchStatus(); }, 4000)); });
     
-    elements.apply.addEventListener('click', () => {
-        if (!elements.apply.classList.contains('dirty')) return;
+    // --- EVENT LISTENERS (They only change uiState and call for a UI update) ---
+    elements.modeButtons.forEach(btn => btn.addEventListener('click', function() { uiState.mode = this.dataset.mode; updateUI(); }));
+    elements.countrySelect.addEventListener('change', () => { uiState.country = elements.countrySelect.value; updateUI(); });
+    elements.reconEnabled.addEventListener('change', () => { uiState.reconnect_enabled = elements.reconEnabled.checked ? '1' : '0'; updateUI(); });
+    elements.reconInterval.addEventListener('input', () => { uiState.reconnect_interval = elements.reconInterval.value; updateUI(); });
+
+    // --- ACTION BUTTONS ---
+    elements.connect.addEventListener('click', () => { setBusy(true, 'Connecting...'); callAPI('?action=toggle', () => setTimeout(() => { setBusy(false); callAPI('?action=status', data => { serverState.running = data.running; updateUI(); }); }, 5000)); });
+    elements.disconnect.addEventListener('click', () => { setBusy(true, 'Disconnecting...'); callAPI('?action=toggle', () => setTimeout(() => { setBusy(false); callAPI('?action=status', data => { serverState.running = data.running; updateUI(); }); }, 4000)); });
+    
+    elements.applyBtn.addEventListener('click', () => {
+        if (!elements.applyBtn.classList.contains('dirty')) return;
         setBusy(true, 'Applying Settings...');
         const params = `?action=save_settings&mode=${uiState.mode}&country=${uiState.country}`;
         callAPI(params, () => {
-            alert('Service settings applied. The service is restarting...');
-            setTimeout(() => { setBusy(false); fetchStatus(); }, 6000);
+            // OPTIMISTIC UPDATE: The new saved state IS the current UI state.
+            serverState.mode = uiState.mode;
+            serverState.country = uiState.country;
+            updateUI(); // Re-render instantly with the new saved state
+            showNotification('Service settings applied. Restarting service...', 4000);
+            setTimeout(() => {
+                setBusy(false);
+                // Fetch full status later to get new IP and confirm running state
+                callAPI('?action=status', data => { 
+                    serverState.running = data.running;
+                    serverState.ip = data.ip;
+                    serverState.ipCountryCode = data.ipCountryCode;
+                    updateUI(); 
+                });
+            }, 8000);
         });
     });
 
-    elements.reconSave.addEventListener('click', () => {
-        if (!elements.reconSave.classList.contains('dirty')) return;
+    elements.reconSaveBtn.addEventListener('click', () => {
+        if (!elements.reconSaveBtn.classList.contains('dirty')) return;
         setBusy(true, 'Saving Reconnect...');
         const params = `?action=save_reconnect&enabled=${uiState.reconnect_enabled}&interval=${uiState.reconnect_interval}`;
         callAPI(params, () => {
-            alert('Reconnect settings saved.');
-            setTimeout(() => { setBusy(false); fetchStatus(); }, 2000);
+            // OPTIMISTIC UPDATE: The new saved state IS the current UI state.
+            serverState.reconnect_enabled = uiState.reconnect_enabled;
+            serverState.reconnect_interval = uiState.reconnect_interval;
+            updateUI(); // Re-render instantly with the new saved state
+            showNotification('Reconnect settings saved.', 3000);
+            setBusy(false);
         });
     });
 
-    // Initial load and periodic polling
-    fetchStatus();
-    fetchLog();
-    setInterval(fetchStatus, 5000);
-    setInterval(fetchLog, 3000);
+    // --- INITIAL LOAD & POLLING ---
+    setBusy(true, 'Loading status...');
+    callAPI('?action=status', data => {
+        if (data && data.mode) {
+            serverState = deepCopy(data);
+            uiState = deepCopy(data);
+            initialLoadComplete = true;
+            setBusy(false);
+            updateUI();
+            
+            // Polling only updates non-user-configurable parts of serverState
+            setInterval(() => {
+                if (isBusy || document.hidden) return;
+                callAPI('?action=status', newData => {
+                    serverState.running = newData.running;
+                    serverState.ip = newData.ip;
+                    serverState.ipCountryCode = newData.ipCountryCode;
+                    updateUI();
+                });
+            }, 7000);
+            
+            callAPI('?action=get_debug_log', logData => {
+                 if (logData && logData.log) elements.log.textContent = logData.log;
+            });
+            setInterval(() => {
+                if (isBusy || document.hidden) return;
+                callAPI('?action=get_debug_log', logData => {
+                    if (logData && logData.log && elements.log.textContent !== logData.log) {
+                        elements.log.textContent = logData.log;
+                        elements.log.scrollTop = logData.log.scrollHeight;
+                    }
+                });
+            }, 3000);
+
+        } else {
+            setBusy(false);
+            elements.text.innerText = "Error loading config!";
+        }
+    });
 });
 </script>
 <%+footer%>
@@ -373,7 +430,7 @@ EoL
 echo "LuCI UI files created successfully."
 
 # --- 4. Create and Enable Service ---
-echo "\n[Step 4/6] Creating and enabling the Warp+ service..."
+echo -e "\n[Step 4/6] Creating and enabling the Warp+ service..."
 
 # Create the initial init.d script and clear debug log
 echo "" > /tmp/wrpplus_debug.log
@@ -386,6 +443,8 @@ start_service() {
     local args="-b 127.0.0.1:8086 --scan"
     procd_open_instance
     procd_set_param command $PROG $args
+    procd_set_param stdout 1
+    procd_set_param stderr 1
     procd_set_param respawn
     procd_close_instance
 }
@@ -397,7 +456,7 @@ service warp start
 echo "Warp+ service has been enabled and started."
 
 # --- 5. Configure Passwall ---
-echo "\n[Step 5/6] Configuring Passwall/Passwall2..."
+echo -e "\n[Step 5/6] Configuring Passwall/Passwall2..."
 if uci show passwall2 >/dev/null 2>&1; then
     uci set passwall2.WarpPlus=nodes; uci set passwall2.WarpPlus.remarks='Warp+'; uci set passwall2.WarpPlus.type='Xray'; uci set passwall2.WarpPlus.protocol='socks'; uci set passwall2.WarpPlus.server='127.0.0.1'; uci set passwall2.WarpPlus.port='8086'; uci commit passwall2
     echo "Passwall2 configured successfully."
@@ -409,15 +468,14 @@ else
 fi
 
 # --- 6. Finalize and Clean Up ---
-echo "\n[Step 6/6] Finalizing installation..."
+echo -e "\n[Step 6/6] Finalizing installation..."
 rm -f /tmp/luci-indexcache
 /etc/init.d/uhttpd restart
 rm -f /tmp/warp.zip /tmp/warp /tmp/README.md /tmp/LICENSE
 
-echo "\n================================================"
+echo -e "\n================================================"
 echo "      Installation Completed Successfully! "
-echo "================================================"
-echo "\nPlease refresh your router's web page."
+echo -e "================================================"
+echo -e "\nPlease refresh your router's web page."
 echo "You can find the new manager under: PeDitXOS Tools -> Warp+"
-echo "\nMade By: PeDitX & Gemini\n"
-
+echo -e "\nMade By: PeDitX & Gemini\n"
