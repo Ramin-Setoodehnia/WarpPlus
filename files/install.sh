@@ -74,7 +74,7 @@ cat > /usr/lib/lua/luci/controller/wrpplus.lua <<'EoL'
 module("luci.controller.wrpplus", package.seeall)
 
 function index()
-    entry({"admin", "peditxos"}, nil, "PeDitXOS Tools", 50).dependent = false
+    entry({"admin", "peditxos"}, nil, "PeDitXOS Tools", 40).dependent = false
     entry({"admin", "peditxos", "wrpplus"}, template("wrpplus/main"), "Warp+", 1).dependent = true
     entry({"admin", "peditxos", "wrpplus_api"}, call("api_handler")).leaf = true
 end
