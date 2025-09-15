@@ -458,10 +458,10 @@ echo "Warp+ service has been enabled and started."
 # --- 5. Configure Passwall ---
 echo -e "\n[Step 5/6] Configuring Passwall/Passwall2..."
 if uci show passwall2 >/dev/null 2>&1; then
-    uci set passwall2.WarpPlus=nodes; uci set passwall2.WarpPlus.remarks='Warp+'; uci set passwall2.WarpPlus.type='Xray'; uci set passwall2.WarpPlus.protocol='socks'; uci set passwall2.WarpPlus.server='127.0.0.1'; uci set passwall2.WarpPlus.port='8086'; uci commit passwall2
+    uci set passwall2.WarpPlus=nodes; uci set passwall2.WarpPlus.remarks='WarpPlus'; uci set passwall2.WarpPlus.type='Xray'; uci set passwall2.WarpPlus.protocol='socks'; uci set passwall2.WarpPlus.server='127.0.0.1'; uci set passwall2.WarpPlus.port='8086'; uci commit passwall2
     echo "Passwall2 configured successfully."
 elif uci show passwall >/dev/null 2>&1; then
-    uci set passwall.WarpPlus=nodes; uci set passwall.WarpPlus.remarks='Warp+'; uci set passwall.WarpPlus.type='Xray'; uci set passwall.WarpPlus.protocol='socks'; uci set passwall.WarpPlus.server='127.0.0.1'; uci set passwall.WarpPlus.port='8086'; uci commit passwall
+    uci set passwall.WarpPlus=nodes; uci set passwall.WarpPlus.remarks='WarpPlus'; uci set passwall.WarpPlus.type='Xray'; uci set passwall.WarpPlus.protocol='socks'; uci set passwall.WarpPlus.server='127.0.0.1'; uci set passwall.WarpPlus.port='8086'; uci commit passwall
     echo "Passwall configured successfully."
 else
     echo "Neither Passwall nor Passwall2 found. Skipping configuration."
